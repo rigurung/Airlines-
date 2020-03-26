@@ -1,0 +1,199 @@
+<html>
+
+<head>
+    <style>
+        #mapid {
+            height: 100%;
+        }
+    </style>
+   <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"
+   integrity="sha512-gZwIG9x3wUXg2hdXF6+rVkLF/0Vi9U8D2Ntg4Ga5I5BZpVkVxlJWbSQtXPSiUTtC0TjtGOmxa1AJPuV0CPthew=="
+   crossorigin=""></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css"
+        integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ=="
+        crossorigin=""/> 
+    <script src="https://api.mapbox.com/mapbox-gl-js/v1.8.1/mapbox-gl.js"></script>
+<!-- 
+    <link rel="stylesheet" href="https://d19vzq90twjlae.cloudfront.net/leaflet-0.7.2/leaflet.css" />
+    <script src="https://d19vzq90twjlae.cloudfront.net/leaflet-0.7.2/leaflet.js"></script> -->
+
+    <link href="https://api.mapbox.com/mapbox-gl-js/v1.8.1/mapbox-gl.css" rel="stylesheet" />
+    
+    <script src="https://elfalem.github.io/Leaflet.curve/src/leaflet.curve.js"></script>
+
+    <script src="https://github.com/tweenjs/tween.js/blob/master/src/Tween.js"></script>
+
+    <script src="/canvasOverlay"></script>
+</head>
+
+<body>
+    <div id="mapid">
+        <script>
+
+            function arrToObject(arr) {
+                //assuming header
+                var keys = arr[0];
+                //vacate keys from main array
+                var newArr = arr.slice(1, arr.length);
+
+                var formatted = [],
+                    data = newArr,
+                    cols = keys,
+                    l = cols.length;
+                for (var i = 0; i < data.length; i++) {
+                    var d = data[i],
+                        o = {};
+                    for (var j = 0; j < l; j++)
+                        o[cols[j]] = d[j];
+                    formatted.push(o);
+                }
+                return formatted;
+            }
+
+            var mymap = L.map('mapid', { preferCanvas: true }, {
+            }).setView([51.505, -0.09], 4);
+
+            L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
+                attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+                maxZoom: 18,
+                id: 'mapbox/streets-v11',
+                tileSize: 512,
+                zoomOffset: -1,
+                accessToken: 'pk.eyJ1Ijoicmd1cnVuZyIsImEiOiJjazc0MXBmNTIwMHBoM2VueGF1Y3FmMXdxIn0.PPKFlvD4S1ft4BeJVgXzIA'
+            }).addTo(mymap);
+
+            let req = new XMLHttpRequest();
+            req.open("GET", "/mapData");
+            req.send();
+            req.onload = () => {
+                if (req.status == 200) {
+                    // console.log(req.response.replace(/'/g, "\""));
+                    plotPoints(JSON.parse(req.response.replace(/'/g, "\"")));
+                } else {
+                    console.log(`error ${req.status} ${req.statusText}`)
+
+                }
+            }
+
+            time = 0;
+            timestep = 0;
+
+            function DrawCanvas() {
+                timestep += 1;
+                let outsideTimestep = timestep;
+
+                let myfunc = function (canvasOverlay, params) {
+                    var ctx = params.canvas.getContext('2d');
+                    ctx.fillStyle = "rgba(255,116,0, 0.2)";
+                    ctx.clearRect(0, 0, params.canvas.width, params.canvas.height);
+                    let interpoltePoint;
+                    // console.log(params.options.data)
+                    params.options.data.map(function (d, i) {
+                        if (timestep != outsideTimestep) { return; }
+                        interpoltePoint = distancePoint([d["Source Latitude"], d["Source Longitude"]], [d["Latitude"], d["Longitude"]], time)
+                        let boundedpoint;
+
+                        try {
+                            boundedpoint = params.bounds.contains(interpoltePoint)
+                        }
+                        catch (ex) {
+                            /*  console.log(boundedpoint);
+                              console.log(ex);*/
+                            boundedpoint = false;
+                        }
+
+                        if (params.bounds.contains(interpoltePoint)) {
+                            dot = canvasOverlay._map.latLngToContainerPoint(interpoltePoint);
+                            ctx.beginPath();
+                            ctx.arc(dot.x, dot.y, 3, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.closePath();
+                        }
+                    });
+                    time += 1 / 1000;
+                    if (time > 1) { time = 0 }
+
+                    window.requestAnimationFrame(() => {
+                        myfunc(canvasOverlay, params)
+                    });
+                };
+                return myfunc;
+
+            }
+
+            function distancePoint(Point1, Point2, t) {
+                d = (Point2[0] - Point1[0])
+                if (d == 0) {
+                    d = 0.1;
+                }
+                let slope = (Point2[1] - Point1[1]) / d;
+                let x = Point1[0] + (Point2[0] - Point1[0]) * t;
+                let y = slope * (x - Point1[0]) + Point1[1];
+                return [x, y]
+            }
+
+            function plotPoints(data) {
+                data = arrToObject(data);
+                //console.log(data);
+                data.forEach(point => {
+                    interpolateArc([point["Source Latitude"], point["Source Longitude"]], [point["Latitude"], point["Longitude"]]);
+                });
+
+               
+
+                L.canvasOverlay()
+                    .params({ data: data })     // optional add any custom data that will be passed to draw function
+                    .drawing(DrawCanvas())   // set drawing function
+                    .addTo(mymap);
+            };
+
+            function interpolateArc(point1, point2) {
+
+                var latlngs = [];
+
+                var latlng1 = [point1[0], point1[1]],
+                    latlng2 = [point2[0], point2[1]];
+
+                var offsetX = latlng2[1] - latlng1[1],
+                    offsetY = latlng2[0] - latlng1[0];
+
+                var r = Math.sqrt(Math.pow(offsetX, 2) + Math.pow(offsetY, 2)),
+                    theta = Math.atan2(offsetY, offsetX);
+
+                var thetaOffset = (3.14 / 10);
+
+                var r2 = (r / 2) / (Math.cos(thetaOffset)),
+                    theta2 = theta + thetaOffset;
+
+                var midpointX = (r2 * Math.cos(theta2)) + latlng1[1],
+                    midpointY = (r2 * Math.sin(theta2)) + latlng1[0];
+
+                var midpointLatLng = [midpointY, midpointX];
+
+                latlngs.push(latlng1, midpointLatLng, latlng2);
+
+                var pathOptions = {
+                    color: 'red',
+                    weight: 3
+            }
+
+            var curvedPath = L.curve(
+                [
+                    'M', latlng1,
+                    'Q', midpointLatLng,
+                    latlng2
+                ], pathOptions).addTo(mymap);
+
+            }
+
+
+
+
+
+        </script>
+
+    </div>
+</body>
+
+</html>
